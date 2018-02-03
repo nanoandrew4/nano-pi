@@ -4,17 +4,16 @@
 
 #include <gmp.h>
 
-#define PRECISION 1000
+#define PRECISION 100000
 #define ITERATIONS (PRECISION / 14 + 1)
 
 struct sumData {
-    int initPos;
     int workingThreads = 4;
     mpf_t *parts[5];
-    mpf_t sum;
+    mpf_t pi;
 };
 
-void opt();
+void chudnovsky();
 
 void calcA(mpz_t *);
 
@@ -26,27 +25,25 @@ void calcD(mpz_t *);
 
 void calcE(mpz_t *);
 
-void sum(sumData *);
-
-void prev();
+void sum(sumData *, long initPos);
 
 int main() {
 
     auto init = std::chrono::high_resolution_clock::now();
-    opt();
+    chudnovsky();
     auto final = std::chrono::high_resolution_clock::now();
 
-    std::cout << "Calculation took: " << std::chrono::duration_cast<std::chrono::milliseconds>(final - init).count()
+    std::cout << std::endl << "Calculation took: " << std::chrono::duration_cast<std::chrono::milliseconds>(final - init).count()
               << "ms"
               << std::endl;
 
     return 0;
 }
 
-void opt() {
+void chudnovsky() {
     mpf_set_default_prec(PRECISION);
 
-    mpz_t **sets = new mpz_t *[5];
+    mpz_t *sets[5];
 
     for (int i = 0; i < 5; i++)
         sets[i] = new mpz_t[ITERATIONS];
@@ -59,53 +56,64 @@ void opt() {
 
     calcA(sets[0]);
 
-    for (int i = 0; i < 4; i++)
-        threads[i].join();
+    for (auto &thread : threads)
+        thread.join();
 
-    std::cout << "All values calculated, starting type conversion and combination" << std::endl;
-
-    mpz_out_str(NULL, 10, sets[0][1]);
+    std::cout << "All values calculated, starting type conversion" << std::endl;
 
     sumData combinedSet;
 
-    mpf_init(combinedSet.sum);
-
     for (int i = 0; i < 5; i++) {
         combinedSet.parts[i] = new mpf_t[ITERATIONS];
-        for (int j = 0; j < ITERATIONS; j++)
+        for (int j = 0; j < ITERATIONS; j++) {
+            mpf_init(combinedSet.parts[i][j]);
             mpf_set_z(combinedSet.parts[i][j], sets[i][j]);
-        mpz_clears(*sets[i]);
+            mpz_clear(sets[i][j]);
+        }
         delete sets[i];
     }
 
-    std::cout << "Finished type conversion and cleanup, proceeding to perform combinations" << std::endl;
+    std::cout << "Finished type conversion, proceeding to perform summation" << std::endl;
 
-    sum(&combinedSet);
+    mpf_init(combinedSet.pi);
 
-//    pthread_t sumThreads[combinedSet.workingThreads];
+    std::thread sumThread[3];
+    for (int i = 0; i < 3; i++)
+        sumThread[i] = std::thread(sum, &combinedSet, (ITERATIONS * i) / (double) combinedSet.workingThreads);
+
+    sum(&combinedSet, (long)(ITERATIONS * (3 / 4.0)));
+
+    for (std::thread &i : sumThread)
+        i.join();
+
+    std::cout << "Finished summation" << std::endl;
+
+    mpf_t constant;
+    mpf_init_set_ui(constant, 10005);
+    mpf_sqrt(constant, constant);
+    mpf_mul_ui(constant, constant, 426880);
+
+    mpf_div(combinedSet.pi, constant, combinedSet.pi);
 
     for (int i = 0; i < 5; i++) {
-        mpf_clears(*combinedSet.parts[i]);
+        for (int j = 0; j < ITERATIONS; j++)
+            mpf_clear(combinedSet.parts[i][j]);
         delete combinedSet.parts[i];
     }
 
-    mpf_out_str(NULL, 10, PRECISION, combinedSet.sum);
+    mpf_out_str(NULL, 10, PRECISION, combinedSet.pi);
 }
 
-void sum(sumData *sumD) {
-//    sumData* sumD = (sumData *) arg;
-    int initPos = sumD->initPos;
-    int endPos = (ITERATIONS / sumD->workingThreads) + initPos;
+void sum(sumData *sumD, long initPos) {
+    long endPos = (ITERATIONS / sumD->workingThreads) + initPos;
 
-    for (int i = initPos; i < endPos; i++) {
+    for (long i = initPos; i < endPos; i++) {
         mpf_div(sumD->parts[0][i], sumD->parts[0][i], sumD->parts[2][i]);
         mpf_div(sumD->parts[1][i], sumD->parts[1][i], sumD->parts[3][i]);
         mpf_mul(sumD->parts[0][i], sumD->parts[0][i], sumD->parts[1][i]);
         mpf_div(sumD->parts[0][i], sumD->parts[0][i], sumD->parts[4][i]);
-        mpf_add(sumD->sum, sumD->sum, sumD->parts[0][i]);
+        mpf_add(sumD->pi, sumD->pi, sumD->parts[0][i]);
     }
-
-    std::cout << "Finished summation" << std::endl;
 }
 
 void calcA(mpz_t *lData) {
